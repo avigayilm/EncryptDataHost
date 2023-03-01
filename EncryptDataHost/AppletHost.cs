@@ -22,8 +22,6 @@ namespace EncryptDataHost
     class AppletHost
     {
 
-        static byte[] pk = new byte[1024];
-
         /// <summary>
         /// Enum for the choice of action
         /// </summary>
@@ -134,7 +132,7 @@ namespace EncryptDataHost
 
 
         /// <summary>
-        /// recirves the mail from the socket
+        /// receives the mail from the socket and does very operations on it.
         /// </summary>
         /// <param name="sock_data"></param>
         /// <param name="session"></param>
@@ -143,7 +141,7 @@ namespace EncryptDataHost
         {
             // taking the first byte inorder to know what the command is.
             int input = (int)sock_data_byte[0];
-            byte[] new_byte_array = new byte[sock_data_byte.Length - 1]; // new byte array
+            byte[] new_byte_array = new byte[sock_data_byte.Length - 1]; // new byte array without the command
 
             // copy remaining values from original byte array to new byte array starting from index 1
             Array.Copy(sock_data_byte, 1, new_byte_array, 0, new_byte_array.Length);
@@ -157,7 +155,8 @@ namespace EncryptDataHost
                     {
                         // in case of sending the bytes are send as UTF8
                         string sock_data = Encoding.UTF8.GetString(new_byte_array);
-                        string seperator = "+/+/+/+/";
+                        // seperator to seperate the incoming message, which consists out of email addr and mailbody
+                        string seperator = "+/+/+/+/"; 
 
                         string[] split_data = sock_data.Split(new[] { seperator }, StringSplitOptions.None);
 
@@ -166,7 +165,8 @@ namespace EncryptDataHost
 
                         //get the public key
                         byte[] pk;
-                        if (!PublicKeys.public_keys.ContainsKey(email_addr))
+                        // if the email addr is not in the dictionary it's not part of our platform
+                        if (!PublicKeys.public_keys.ContainsKey(email_addr)) 
                         {
                             byte[] error = Encoding.UTF8.GetBytes("false");
                             return error;
@@ -174,9 +174,10 @@ namespace EncryptDataHost
                         else
                             pk = PublicKeys.public_keys[email_addr];
 
-
+                        // in order to encrypt the email, the email needs to be encoded in an UTF8 byte array.
                         byte[] byte_mail_body = System.Text.Encoding.UTF8.GetBytes(mail_body);
-                        //ENCRYPT                       
+                        //ENCRYPT
+                        //the result of the encryption is also encrypted in an UTF8 byte arry
                         recvBuffer = EncryptData(byte_mail_body, pk, session);                  
                         return recvBuffer;
                     }
@@ -213,7 +214,6 @@ namespace EncryptDataHost
                     
             }
         }
-
 
 
                     static void Main(string[] args)
@@ -291,7 +291,7 @@ namespace EncryptDataHost
 
                     //emaildata that he receives from the client
 
-                    //making the receivedData byte array as the length of the received bytes
+                    //making the receivedData byte array as the length of the received bytes( not 1024 as he size of the buffer)
                     int bytesReceived = handler.Receive(buffer);
                     byte[] receivedData = new byte[bytesReceived];
                     Buffer.BlockCopy(buffer, 0, receivedData, 0, bytesReceived);
@@ -300,7 +300,7 @@ namespace EncryptDataHost
                     //function to handle client
                     byte[] response = Instance.handleClient_byte(receivedData, session);
 
-
+                    // send the response back to the outlook
                     handler.Send(response);
 
                     // Close the socket.
