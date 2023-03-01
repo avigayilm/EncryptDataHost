@@ -21,10 +21,13 @@ namespace EncryptDataHost
     }
     class AppletHost
     {
+
+        static byte[] pk = new byte[1024];
+
         /// <summary>
         /// Enum for the choice of action
         /// </summary>
-        public enum CHOICE { SIGN_ENCRYPT, VERIFY_DECRYPT, SIGN, VERIFY }
+        public enum CHOICE { ENCRYPT, DECRYPT, SIGN, GET_KEY ,GEN_KEY}
 
         /// <summary>
         /// enum for the applet
@@ -124,34 +127,11 @@ namespace EncryptDataHost
             Buffer.BlockCopy(pk, 256, exponent, 0, 4);
             return Tuple.Create(modulus, exponent);
         }
-        /// <summary>
-        /// converts the hexadecimal string to a byte array
-        /// </summary>
-        /// <param name="hex"></param>
-        /// <returns></returns>
-        public byte[] StringHexToByte(string hex)
-        {
-            string[] hexValues = hex.Split('-');
-            byte[] byteArray = new byte[hexValues.Length];
-            for (int i = 0; i < hexValues.Length; i++)
-            {
-                byteArray[i] = Convert.ToByte(hexValues[i], 16);
-            }
-            return byteArray;
-        }
 
-        public bool Verify(byte[] data, byte[] signature, byte[] pk)
-        {
-            var mod_exp = GetModExp(pk);
-            Org.BouncyCastle.Math.BigInteger mod = new Org.BouncyCastle.Math.BigInteger(1, mod_exp.Item1);
-            Org.BouncyCastle.Math.BigInteger exp = new Org.BouncyCastle.Math.BigInteger(1, mod_exp.Item2);
-            RsaKeyParameters param = new RsaKeyParameters(false, mod, exp);
-            ISigner signClientSide = SignerUtilities.GetSigner(PkcsObjectIdentifiers.Sha256WithRsaEncryption.Id);
-            signClientSide.Init(false, param);
-            signClientSide.BlockUpdate(data, 0, data.Length);
-            return signClientSide.VerifySignature(signature);
-        }
         #endregion
+
+    
+
 
         /// <summary>
         /// recirves the mail from the socket
@@ -159,186 +139,84 @@ namespace EncryptDataHost
         /// <param name="sock_data"></param>
         /// <param name="session"></param>
         /// <returns></returns>
-        byte[] handleClient(string sock_data, JhiSession session)
+        byte[] handleClient_byte(byte[] sock_data_byte, JhiSession session)
         {
+            // taking the first byte inorder to know what the command is.
+            int input = (int)sock_data_byte[0];
+            byte[] new_byte_array = new byte[sock_data_byte.Length - 1]; // new byte array
 
-            string seperator = "#*#*#*#*";
-            byte[] byte_seperator = System.Text.Encoding.UTF8.GetBytes(seperator);
-            string[] split_data = sock_data.Split(new[] { seperator }, StringSplitOptions.None);
-            Int32.TryParse(split_data[0], out int input);
-            //Int32.TryParse(sock_data[0], out int input);
-            string email_addr = split_data[1];
-            string mail_body = split_data[2];
+            // copy remaining values from original byte array to new byte array starting from index 1
+            Array.Copy(sock_data_byte, 1, new_byte_array, 0, new_byte_array.Length);
 
-            //Gets the public key
-            byte[] pk;
-            if (!PublicKeys.public_keys.ContainsKey(email_addr))
-            {
-                pk = GenerateKey(session);
-                PublicKeys.public_keys.Add(email_addr, pk);
-            }
-            else
-                pk = PublicKeys.public_keys[email_addr];
+
+            byte[] recvBuffer = new byte[400];
 
             switch (input)
             {
-                case (int)CHOICE.SIGN_ENCRYPT:
+                case (int)CHOICE.ENCRYPT:
                     {
-                        byte[] byte_mail_body = System.Text.Encoding.UTF8.GetBytes(mail_body);
-                        //SIGN
-                        byte[] signature = SignData(byte_mail_body, session);
-                        //ENCRYPT                       
-                        byte[] recvBuffer = EncryptData(byte_mail_body, pk, session);
-                        byte[] rslt = recvBuffer.Concat(byte_seperator.Concat(signature)).ToArray();
-                        return rslt;
-                    }
-                case (int)CHOICE.VERIFY_DECRYPT:
-                    {
+                        // in case of sending the bytes are send as UTF8
+                        string sock_data = Encoding.UTF8.GetString(new_byte_array);
+                        string seperator = "+/+/+/+/";
 
-                        //string[] context = mail_body.Split(new[] { BitConverter.ToString(byte_seperator) }, StringSplitOptions.None);
-                        //string body = context[0];
-                        //string signature = context[1];
-                        string body = email_addr;
-                        string signature = mail_body;
-                        //DECRYPT
-                       // byte[] byte_body_encrypted = StringHexToByte(body);
-                        byte[] byte_body_encrypted = System.Text.Encoding.UTF8.GetBytes(body); 
-                        byte[] byte_body_decrypted = new byte[2000];
-                        byte_body_decrypted = DecryptData(byte_body_encrypted, session);
-                        // string rslt = System.Text.Encoding.UTF8.GetString(byte_body_decrypted);
-                        //VERIFY
-                        // to verify we need the original text data which is: byte_body_decrypted
-                        // and we need the signatuer which is the byte_signature
-                        // verifiy the data
-                        //byte[] byte_signature = StringHexToByte(body);
-                        byte[] byte_signature=System.Text.Encoding.UTF8.GetBytes(signature);
-                        bool is_verify = Verify(byte_body_decrypted, byte_signature, pk);
-                        if (is_verify)
-                            return byte_body_decrypted;
+                        string[] split_data = sock_data.Split(new[] { seperator }, StringSplitOptions.None);
+
+                        string email_addr = split_data[0];
+                        string mail_body = split_data[1];
+
+                        //get the public key
+                        byte[] pk;
+                        if (!PublicKeys.public_keys.ContainsKey(email_addr))
+                        {
+                            byte[] error = Encoding.UTF8.GetBytes("false");
+                            return error;
+                        }
                         else
-                            return Encoding.UTF8.GetBytes("false");
+                            pk = PublicKeys.public_keys[email_addr];
+
+
+                        byte[] byte_mail_body = System.Text.Encoding.UTF8.GetBytes(mail_body);
+                        //ENCRYPT                       
+                        recvBuffer = EncryptData(byte_mail_body, pk, session);                  
+                        return recvBuffer;
+                    }
+                case (int)CHOICE.DECRYPT:
+                    {
+                        byte[] byte_body_decrypted = new byte[2000];
+                        byte_body_decrypted = DecryptData(new_byte_array, session);
+                        return byte_body_decrypted;
                     }
 
                 case (int)CHOICE.SIGN:
                     {
-                        byte[] byte_mail_body = System.Text.Encoding.UTF8.GetBytes(mail_body);
-                        byte[] signature = SignData(byte_mail_body, session);
-                        byte[] sep_sign = byte_seperator.Concat(signature).ToArray();
-                        byte[] enter= Encoding.UTF8.GetBytes("\n\n");
-                        return byte_mail_body.Concat(enter.Concat(sep_sign).ToArray()).ToArray();
+                        //SIGN                       
+                        recvBuffer = SignData(new_byte_array, session);
+                        return recvBuffer;
                     }
-                case (int)CHOICE.VERIFY:
+                case (int)CHOICE.GET_KEY:
                     {
-
-                        //string[] context = mail_body.Split(new[] { BitConverter.ToString(byte_seperator) }, StringSplitOptions.None);
-                        //string body = context[0];
-                        //string signature = context[1];
-                        string body = email_addr;
-                        string signature = mail_body;
-                        byte[] byte_mail_body = System.Text.Encoding.UTF8.GetBytes(body);
-                        //byte[]byte_signature = System.Text.Encoding.UTF8.GetBytes(signature);
-                        byte[] byte_signature = StringHexToByte(signature);
-                        bool is_verify = Verify(byte_mail_body, byte_signature, pk);
-                        if (is_verify)
-                            return Encoding.UTF8.GetBytes("true");
-                        else
+                        string email = Encoding.UTF8.GetString(new_byte_array);
+                        //Gets the public key
+                        if (!PublicKeys.public_keys.ContainsKey(email))
+                        {
+                            // if the key is not in the dictionary than the user is not part of our platform, so an error wil be returned.
                             return Encoding.UTF8.GetBytes("false");
+
+                        }
+                        else
+                            return PublicKeys.public_keys[email];
                     }
                 default:
                     {
-                        return Encoding.UTF8.GetBytes("error");
+                        return Encoding.UTF8.GetBytes("false");
                     }
-
-
-                    //case (int)CMD.SIGN_DATA:
-                    //    {
-                    //        byte[] temp2 = Instance.GenerateKey(session);
-                    //        userKey.Modulus = new byte[256];
-                    //        Buffer.BlockCopy(pk, 0, userKey.Modulus, 0, 256);
-                    //        userKey.Exponent = new byte[4];
-                    //        Buffer.BlockCopy(pk, 256, userKey.Exponent, 0, 4);
-                    //        Console.WriteLine("Enter the message to encode");
-                    //        string str = Console.ReadLine();
-                    //        byte[] byteArray = System.Text.Encoding.UTF8.GetBytes(str);
-                    //        // the recvBuffer has the signature
-                    //        recvBuffer = Instance.SignData(byteArray, session);
-
-
-                    //        Console.WriteLine("This is the message with the signature \n");
-                    //        Console.WriteLine(BitConverter.ToString(recvBuffer));
-
-                    //        // to verify we need the original text data which is: bytearray
-                    //        // and we need the signatuer which is recvBuffer
-                    //        // verifiy the daya
-                    //        Org.BouncyCastle.Math.BigInteger mod = new Org.BouncyCastle.Math.BigInteger(1, userKey.Modulus);
-                    //        Org.BouncyCastle.Math.BigInteger exp = new Org.BouncyCastle.Math.BigInteger(1, userKey.Exponent);
-                    //        RsaKeyParameters param = new RsaKeyParameters(false, mod, exp);
-                    //        byte[] tmpSource = byteArray;
-                    //        ISigner signClientSide = SignerUtilities.GetSigner(PkcsObjectIdentifiers.Sha256WithRsaEncryption.Id);
-                    //        signClientSide.Init(false, param);
-                    //        signClientSide.BlockUpdate(tmpSource, 0, tmpSource.Length);
-                    //        bool unsigned = signClientSide.VerifySignature(recvBuffer);
-                    //        Console.WriteLine(unsigned);
-
-                    //        break;
-                    //    }
-                    //case (int)CMD.VALIDATE_SIGN:
-                    //    {
-                    //        Console.WriteLine("Enter the message to encode");
-                    //        string str = Console.ReadLine();
-                    //        byte[] byteArray = System.Text.Encoding.UTF8.GetBytes(str);
-                    //        byte[] temp = new byte[2000];
-                    //        temp = Instance.SignData(byteArray, session);
-                    //        Console.WriteLine("This is the message with the signature \n");
-                    //        Console.WriteLine(BitConverter.ToString(temp));
-
-
-
-
-                    //        break;
-                    //    }
-                    //case (int)CMD.ENCRYPT_DATA:
-                    //    {
-                    //        byte[] temp = new byte[2000];
-                    //        Console.WriteLine("Enter the message to encode");
-                    //        string str = Console.ReadLine();
-                    //        byte[] byteArray = System.Text.Encoding.UTF8.GetBytes(str);
-                    //        temp = Instance.GenerateKey(session);
-                    //        recvBuffer = Instance.EncryptData(byteArray, temp, session);
-                    //        break;
-                    //    }
-                    //case (int)CMD.DECRYPT_DATA:
-                    //    {
-
-                    //        byte[] temp = new byte[2000];
-                    //        Console.WriteLine("Enter the message to encode\n");
-                    //        string str = Console.ReadLine();
-                    //        byte[] byteArray = System.Text.Encoding.UTF8.GetBytes(str);
-                    //        Console.WriteLine(BitConverter.ToString(byteArray));
-                    //        Console.WriteLine("This up was the string in byte \n");
-                    //        temp = Instance.GenerateKey(session);
-                    //        recvBuffer = Instance.EncryptData(byteArray, temp, session);
-                    //        Console.WriteLine("Encoded message\n");
-                    //        Console.WriteLine(BitConverter.ToString(recvBuffer));
-
-
-
-                    //        Console.WriteLine("Enter the message to dencode\n");
-                    //        //string str = Console.ReadLine();
-                    //        //byte[] byteArray = System.Text.Encoding.UTF8.GetBytes(str);
-                    //        byte[] result = new byte[2000];
-                    //        result = Instance.DecryptData(recvBuffer, session);
-                    //        Console.WriteLine(BitConverter.ToString(result));
-                    //        Console.WriteLine("This was the bytes decoded\n");
-                    //        string outt = System.Text.Encoding.UTF8.GetString(result);
-                    //        Console.WriteLine(outt);
-                    //        Console.Write("This was the string decoded\n");
-                    //        break;
-                    //    }
-
+                    
             }
         }
-        static void Main(string[] args)
+
+
+
+                    static void Main(string[] args)
         {
 
             #region initialize the applet
@@ -363,8 +241,8 @@ namespace EncryptDataHost
             //The UUID is the same value as the applet.id field in the Intel(R) DAL Trusted Application manifest.
             string appletID = "5200ffd2-b2e2-402e-bacc-97013469e012";
             // This is the path to the Intel Intel(R) DAL Trusted Application .dalp file that was created by the Intel(R) DAL Eclipse plug-in.
-            //string appletPath = "C:/Users/aviga/eclipse-workspace\\EncryptData\\bin\\EncryptData.dalp";
-             string appletPath = "C:/Users/aviga/eclipse-workspace\\EncryptData\\bin\\EncryptData-debug.dalp";
+            string appletPath = "C:/Users/aviga/eclipse-workspace\\EncryptData\\bin\\EncryptData.dalp";
+             //string appletPath = "C:/Users/aviga/eclipse-workspace\\EncryptData\\bin\\EncryptData-debug.dalp";
 
             // Install the Trusted Application
             Console.WriteLine("Installing the applet.");
@@ -378,6 +256,11 @@ namespace EncryptDataHost
             byte[] initBuffer = new byte[] { }; // Data to send to the applet onInit function
             Console.WriteLine("Opening a session.");
             jhi.CreateSession(appletID, JHI_SESSION_FLAGS.None, initBuffer, out session);
+
+            //when someone would register for the addIn, the public key would be created here.
+            //however becasue we need the email address we will call it from the outlook.
+            byte []pk=Instance.GenerateKey(session);
+            PublicKeys.public_keys.Add("avigayil.mandel@gmail.com", pk);
 
             #endregion
 
@@ -404,19 +287,20 @@ namespace EncryptDataHost
                     Console.WriteLine("Client connected");
 
                     // Receive the data from the client and send a response.
-                    byte[] buffer = new byte[4096];
+                    byte[] buffer = new byte[1024];
 
                     //emaildata that he receives from the client
-                    int bytesReceived = handler.Receive(buffer);
-                    string data = Encoding.ASCII.GetString(buffer, 0, bytesReceived);
 
-                    //string data = Convert.ToBase64String(buffer);
+                    //making the receivedData byte array as the length of the received bytes
+                    int bytesReceived = handler.Receive(buffer);
+                    byte[] receivedData = new byte[bytesReceived];
+                    Buffer.BlockCopy(buffer, 0, receivedData, 0, bytesReceived);
+
 
                     //function to handle client
-                    byte[] response = Instance.handleClient(data, session);
-                    Console.WriteLine(Encoding.ASCII.GetString(response));
-                    //Console.WriteLine("Received message: {0}", data);
-                    //byte[] response = Encoding.ASCII.GetBytes("Hello from the server!");
+                    byte[] response = Instance.handleClient_byte(receivedData, session);
+
+
                     handler.Send(response);
 
                     // Close the socket.
