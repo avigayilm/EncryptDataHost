@@ -25,7 +25,7 @@ namespace EncryptDataHost
         /// <summary>
         /// Enum for the choice of action
         /// </summary>
-        public enum CHOICE { ENCRYPT, DECRYPT, SIGN, GET_KEY ,GEN_KEY}
+        public enum CHOICE { ENCRYPT, DECRYPT, SIGN, GET_KEY ,GEN_KEY,KEY_EX}
 
         /// <summary>
         /// enum for the applet
@@ -126,9 +126,56 @@ namespace EncryptDataHost
             return Tuple.Create(modulus, exponent);
         }
 
+        /// <summary>
+        /// fucntion to split a byte array according to a byte array
+        /// </summary>
+        /// <param name="inputArray"></param>
+        /// <param name="delimiterArray"></param>
+        /// <returns></returns>
+        public static List<byte[]> SeparateBytes(byte[] inputArray, byte[] delimiterArray)
+        {
+            List<byte[]> subArrays = new List<byte[]>();
+            int startIndex = 0;
+
+            for (int i = 0; i < inputArray.Length - delimiterArray.Length + 1; i++)
+            {
+                bool isDelimiter = true;
+
+                for (int j = 0; j < delimiterArray.Length; j++)
+                {
+                    if (inputArray[i + j] != delimiterArray[j])
+                    {
+                        isDelimiter = false;
+                        break;
+                    }
+                }
+
+                if (isDelimiter)
+                {
+                    int subArrayLength = i - startIndex;
+                    byte[] subArray = new byte[subArrayLength];
+                    Array.Copy(inputArray, startIndex, subArray, 0, subArrayLength);
+                    subArrays.Add(subArray);
+                    startIndex = i + delimiterArray.Length;
+                    i += delimiterArray.Length - 1;
+                }
+            }
+
+            int remainingLength = inputArray.Length - startIndex;
+            byte[] remainingArray = new byte[remainingLength];
+            Array.Copy(inputArray, startIndex, remainingArray, 0, remainingLength);
+            subArrays.Add(remainingArray);
+
+            return subArrays;
+        }
+
+
+
+
+
         #endregion
 
-    
+
 
 
         /// <summary>
@@ -137,7 +184,7 @@ namespace EncryptDataHost
         /// <param name="sock_data"></param>
         /// <param name="session"></param>
         /// <returns></returns>
-        byte[] handleClient_byte(byte[] sock_data_byte, JhiSession session)
+        byte[] handleClient_byte(byte[] sock_data_byte, JhiSession session, byte[]myPk)
         {
             // taking the first byte inorder to know what the command is.
             int input = (int)sock_data_byte[0];
@@ -168,8 +215,12 @@ namespace EncryptDataHost
                         // if the email addr is not in the dictionary it's not part of our platform
                         if (!PublicKeys.public_keys.ContainsKey(email_addr)) 
                         {
-                            byte[] error = Encoding.UTF8.GetBytes("false");
-                            return error;
+                            byte byteToAdd = 0;
+                            // if it's not in the dictionary I send my public key
+                            byte[] newArray = new byte[] { byteToAdd }.Concat(myPk).ToArray();
+                            return newArray;
+                            //byte[] error = Encoding.UTF8.GetBytes("false");
+                           // return error;
                         }
                         else
                             pk = PublicKeys.public_keys[email_addr];
@@ -207,10 +258,27 @@ namespace EncryptDataHost
                         else
                             return PublicKeys.public_keys[email];
                     }
-                default:
-                    {
-                        return Encoding.UTF8.GetBytes("false");
-                    }
+                    // for the keyexchagne we save the key with his email in the dictionary
+                    case (int)CHOICE.KEY_EX:
+                        {
+                        byte[] seperator = System.Text.Encoding.UTF8.GetBytes("++++");
+                        List<byte[]> subArrays = SeparateBytes(new_byte_array, seperator);
+                        string response = Convert.ToBase64String(new_byte_array);
+                        byte[] pk = subArrays[1];
+                        string email = Encoding.UTF8.GetString( subArrays[0]);
+                            // Check if "one" is already a key in the dictionary
+                            if (!PublicKeys.public_keys.TryGetValue(email, out  byte[] value))
+                            {
+                                // If "one" is not a key in the dictionary, add it with a value of 1
+                                PublicKeys.public_keys.Add(email, pk);
+                            }
+                        return System.Text.Encoding.UTF8.GetBytes("ok");
+
+                        }
+                    default:
+                        {
+                            return Encoding.UTF8.GetBytes("false");
+                        }
                     
             }
         }
@@ -298,7 +366,7 @@ namespace EncryptDataHost
 
 
                     //function to handle client
-                    byte[] response = Instance.handleClient_byte(receivedData, session);
+                    byte[] response = Instance.handleClient_byte(receivedData, session,pk);
 
                     // send the response back to the outlook
                     handler.Send(response);
